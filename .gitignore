@@ -1,0 +1,4 @@
+backend/.env
+backend/site-data.json
+client/dist
+node_modules
