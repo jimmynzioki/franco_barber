@@ -8,8 +8,8 @@ const { MongoClient } = require('mongodb')
 
 const app = express()
 const port = process.env.PORT || 4000
-const adminUsername = process.env.ADMIN_USERNAME || 'sheevy'
-const adminPassword = process.env.ADMIN_PASSWORD || 'sheevy123'
+const adminUsername = process.env.ADMIN_USERNAME || 'franco'
+const adminPassword = process.env.ADMIN_PASSWORD
 const whatsappNumber = process.env.WHATSAPP_NUMBER || '+254710865376'
 const mongoUri = process.env.MONGODB_URI
 const mongoDbName = process.env.MONGODB_DB_NAME || 'sheevybarbers'
@@ -17,6 +17,11 @@ const sessions = new Set()
 
 if (!mongoUri) {
 	console.error('MONGODB_URI is required. Copy backend/.env.example to backend/.env and set it.')
+	process.exit(1)
+}
+
+if (!adminPassword) {
+	console.error('ADMIN_PASSWORD is required. Set it in backend/.env.')
 	process.exit(1)
 }
 
@@ -30,17 +35,17 @@ app.use((request, response, next) => {
 })
 
 const defaultSite = {
-	name: 'Sheevy Barbers',
+	name: 'TOP RANKING BARBERS',
 	tagline: 'Sharp cuts. Smooth finishes. Your chair awaits.',
 	whatsapp: whatsappNumber,
 	location: 'Kasarani, Mwiki, Mlima Stage',
 	images: [
 		{ id: 1, url: 'https://images.unsplash.com/photo-1585747860715-2ba37e788b70?auto=format&fit=crop&w=1200&q=85', alt: 'Barber shaping a sharp fade' },
 		{ id: 2, url: 'https://images.unsplash.com/photo-1621605815971-fbc98d665033?auto=format&fit=crop&w=900&q=85', alt: 'Fresh men haircut detail' },
-		{ id: 3, url: 'https://images.unsplash.com/photo-1503951914875-452162b0f3f1?auto=format&fit=crop&w=900&q=85', alt: 'Sheevy Barbers chair' },
+		{ id: 3, url: 'https://images.unsplash.com/photo-1503951914875-452162b0f3f1?auto=format&fit=crop&w=900&q=85', alt: 'Top Ranking Barbers chair' },
 	],
 	services: [
-		{ id: 'cut', name: 'The Sheevy Cut', description: 'A tailored cut, clean lines and a finish that holds.', price: 300, image: 'https://images.unsplash.com/photo-1599351431202-1e0f0137899a?auto=format&fit=crop&w=700&q=85' },
+		{ id: 'cut', name: 'The Top Ranking Cut', description: 'A tailored cut, clean lines and a finish that holds.', price: 300, image: 'https://images.unsplash.com/photo-1599351431202-1e0f0137899a?auto=format&fit=crop&w=700&q=85' },
 		{ id: 'shave', name: 'Hot Towel Shave', description: 'Classic straight-razor shave with a warm towel ritual.', price: 500, image: 'https://images.unsplash.com/photo-1622286342621-4bd786c2447c?auto=format&fit=crop&w=700&q=85' },
 		{ id: 'braid', name: 'Braiding', description: 'Neat, creative braids built to match your style.', price: 500, image: 'https://images.unsplash.com/photo-1605497788044-5a32c7078486?auto=format&fit=crop&w=700&q=85' },
 		{ id: 'cut-shave', name: 'Cut + Shave', description: 'The full reset: precision cut with a smooth finish.', price: 400, image: 'https://images.unsplash.com/photo-1621605815971-fbc98d665033?auto=format&fit=crop&w=700&q=85' },
@@ -58,13 +63,14 @@ function requireAdmin(request, response, next) {
 }
 
 function normalizeSite(site) {
+	const rebrand = (value) => typeof value === 'string' ? value.replace(/sheevy/gi, 'Top Ranking') : value
 	return {
-		name: site.name || defaultSite.name,
-		tagline: site.tagline || defaultSite.tagline,
+		name: defaultSite.name,
+		tagline: rebrand(site.tagline || defaultSite.tagline),
 		whatsapp: site.whatsapp || whatsappNumber,
 		location: site.location || defaultSite.location,
-		images: Array.isArray(site.images) ? site.images : defaultSite.images,
-		services: Array.isArray(site.services) && site.services.length ? site.services : defaultSite.services,
+		images: (Array.isArray(site.images) ? site.images : defaultSite.images).map((image) => ({ ...image, alt: rebrand(image.alt) })),
+		services: (Array.isArray(site.services) && site.services.length ? site.services : defaultSite.services).map((service) => ({ ...service, name: rebrand(service.name), description: rebrand(service.description) })),
 	}
 }
 
@@ -124,7 +130,7 @@ async function start() {
 
 	app.put('/api/admin/images', requireAdmin, async (request, response) => {
 		if (!Array.isArray(request.body.images)) return response.status(400).json({ error: 'Images must be an array' })
-		const images = request.body.images.filter((image) => image?.url).slice(0, 6).map((image, index) => ({ id: index + 1, url: image.url, alt: image.alt || 'Sheevy Barbers' }))
+		const images = request.body.images.filter((image) => image?.url).slice(0, 6).map((image, index) => ({ id: index + 1, url: image.url, alt: image.alt || 'Top Ranking Barbers' }))
 		await siteCollection.updateOne({ _id: 'main' }, { $set: { images, updatedAt: new Date() } }, { upsert: true })
 		response.json({ images })
 	})
@@ -137,7 +143,7 @@ async function start() {
 		response.status(201).json({ booking })
 	})
 
-	app.listen(port, () => console.log(`Sheevy Barbers backend ready on http://localhost:${port} with MongoDB`))
+	app.listen(port, () => console.log(`TOP RANKING BARBERS backend ready on http://localhost:${port} with MongoDB`))
 }
 
 start().catch((error) => {
