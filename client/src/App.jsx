@@ -3,6 +3,8 @@ import './App.css'
 
 const currency = (amount) => `KSh ${Number(amount).toLocaleString('en-KE')}`
 const whatsappLink = (number) => `https://wa.me/${number.replace(/\D/g, '')}`
+const apiUrl = (path) => `${import.meta.env.VITE_API_URL || ''}${path}`
+const request = (path, options) => globalThis.fetch(apiUrl(path), options)
 
 function App() {
   const [site, setSite] = useState(null)
@@ -22,7 +24,7 @@ function App() {
   const [newBooking, setNewBooking] = useState({ name: '', phone: '', service: '', date: '', time: '' })
 
   useEffect(() => {
-    fetch('/api/site')
+    request('/api/site')
       .then((response) => { if (!response.ok) throw new Error('Unable to load the shop'); return response.json() })
       .then(setSite)
       .catch((error) => setLoadError(error.message))
@@ -36,7 +38,7 @@ function App() {
     let attempts = 0
     const checkPayment = async () => {
       try {
-        const response = await fetch(`/api/payments/daraja/${encodeURIComponent(paymentCheckoutId)}`)
+        const response = await request(`/api/payments/daraja/${encodeURIComponent(paymentCheckoutId)}`)
         const data = await response.json()
         if (!response.ok) throw new Error(data.error || 'Unable to check M-Pesa payment status')
         if (cancelled) return
@@ -95,7 +97,7 @@ function App() {
     setBookingMessage(booking.paymentMethod === 'queue' ? 'Sending your booking...' : 'Starting your M-Pesa payment...')
     try {
       if (booking.paymentMethod === 'queue') {
-        const response = await fetch('/api/bookings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...booking, service: selectedService.name }) })
+        const response = await request('/api/bookings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...booking, service: selectedService.name }) })
         const data = await response.json()
         if (!response.ok) throw new Error(data.error || 'Unable to prepare your booking')
         const text = `Hi TOP RANKING BARBERS! I would like to join the queue for the ${selectedService.name} on ${booking.date} at ${booking.time}. Name: ${booking.name}. Phone: ${booking.phone}.`
@@ -104,7 +106,7 @@ function App() {
         return
       }
 
-      const response = await fetch('/api/payments/daraja/stk-push', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...booking, service: selectedService.name }) })
+      const response = await request('/api/payments/daraja/stk-push', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...booking, service: selectedService.name }) })
       const data = await response.json()
       if (!response.ok) throw new Error(data.error || 'Unable to start M-Pesa payment')
       setPaymentStatus('pending')
@@ -118,13 +120,13 @@ function App() {
   }
 
   const loadAdmin = async (token) => {
-    const response = await fetch('/api/admin/bookings', { headers: { Authorization: `Bearer ${token}` } })
+    const response = await request('/api/admin/bookings', { headers: { Authorization: `Bearer ${token}` } })
     if (response.ok) setAdminData({ bookings: await response.json(), services: site.services })
   }
 
   const loginAdmin = async (event) => {
     event.preventDefault()
-    const response = await fetch('/api/admin/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(admin) })
+    const response = await request('/api/admin/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(admin) })
     const data = await response.json()
     if (!response.ok) return setAdminMessage(data.error)
     setAdminToken(data.token); setAdminMessage(''); loadAdmin(data.token)
@@ -133,14 +135,14 @@ function App() {
   const saveImages = async (event) => {
     event.preventDefault()
     const images = event.target.urls.value.split('\n').map((url) => ({ url: url.trim() })).filter((image) => image.url)
-    const response = await fetch('/api/admin/images', { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${adminToken}` }, body: JSON.stringify({ images }) })
+    const response = await request('/api/admin/images', { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${adminToken}` }, body: JSON.stringify({ images }) })
     const data = await response.json()
     if (response.ok) { setSite((current) => ({ ...current, images: data.images })); setAdminMessage('Gallery updated.') }
   }
 
   const addAdminBooking = async (event) => {
     event.preventDefault()
-    const response = await fetch('/api/admin/bookings', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${adminToken}` }, body: JSON.stringify(newBooking) })
+    const response = await request('/api/admin/bookings', { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${adminToken}` }, body: JSON.stringify(newBooking) })
     const data = await response.json()
     if (!response.ok) return setAdminMessage(data.error)
     setAdminData((current) => ({ ...current, bookings: [data.booking, ...current.bookings] }))
@@ -152,7 +154,7 @@ function App() {
 
   const saveServices = async (event) => {
     event.preventDefault()
-    const response = await fetch('/api/admin/services', { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${adminToken}` }, body: JSON.stringify({ services: adminData.services }) })
+    const response = await request('/api/admin/services', { method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${adminToken}` }, body: JSON.stringify({ services: adminData.services }) })
     const data = await response.json()
     if (response.ok) { setSite((current) => ({ ...current, services: data.services })); setAdminData((current) => ({ ...current, services: data.services })); setAdminMessage('Customer menu updated.') }
     else setAdminMessage(data.error)
