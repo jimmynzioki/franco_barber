@@ -8,8 +8,12 @@ function App() {
   const [site, setSite] = useState(null)
   const [loadError, setLoadError] = useState('')
   const [selectedService, setSelectedService] = useState(null)
-  const [booking, setBooking] = useState({ name: '', phone: '', date: '', time: '' })
+  const [booking, setBooking] = useState({ name: '', phone: '', date: '', time: '', paymentMethod: 'queue' })
   const [bookingMessage, setBookingMessage] = useState('')
+  const [paymentCheckoutId, setPaymentCheckoutId] = useState('')
+  const [paymentStatus, setPaymentStatus] = useState('')
+  const [paymentReceipt, setPaymentReceipt] = useState('')
+  const [isBookingSubmitting, setIsBookingSubmitting] = useState(false)
   const [adminOpen, setAdminOpen] = useState(false)
   const [admin, setAdmin] = useState({ username: '', password: '' })
   const [adminToken, setAdminToken] = useState('')
@@ -24,7 +28,61 @@ function App() {
       .catch((error) => setLoadError(error.message))
   }, [])
 
-  const openBooking = (service) => { setSelectedService(service); setBookingMessage('') }
+  useEffect(() => {
+    if (!paymentCheckoutId) return undefined
+
+    let cancelled = false
+    let timer
+    let attempts = 0
+    const checkPayment = async () => {
+      try {
+        const response = await fetch(`/api/payments/daraja/${encodeURIComponent(paymentCheckoutId)}`)
+        const data = await response.json()
+        if (!response.ok) throw new Error(data.error || 'Unable to check M-Pesa payment status')
+        if (cancelled) return
+        if (data.paymentStatus === 'paid') {
+          setPaymentStatus('paid')
+          setPaymentReceipt(data.mpesaReceiptNumber || '')
+          setBookingMessage('Payment confirmed. Send your booking details to the shop on WhatsApp.')
+          return
+        }
+        if (data.paymentStatus === 'failed') {
+          setPaymentStatus('failed')
+          setBookingMessage('M-Pesa payment was not completed. You can try again or choose to queue and pay at the shop.')
+          return
+        }
+      } catch (error) {
+        if (cancelled) return
+        setBookingMessage(error.message)
+      }
+      attempts += 1
+      if (attempts >= 24) {
+        setBookingMessage('Payment is still pending. Do not try to pay again until you confirm whether M-Pesa charged you.')
+        return
+      }
+      timer = setTimeout(checkPayment, 5000)
+    }
+
+    checkPayment()
+    return () => { cancelled = true; clearTimeout(timer) }
+  }, [paymentCheckoutId])
+
+  const openBooking = (service) => {
+    setSelectedService(service)
+    setBookingMessage('')
+    setPaymentCheckoutId('')
+    setPaymentStatus('')
+    setPaymentReceipt('')
+    setBooking((current) => ({ ...current, paymentMethod: 'queue' }))
+  }
+
+  const chooseBookingMethod = (paymentMethod) => {
+    if (paymentStatus === 'pending' || paymentStatus === 'paid') return
+    setBooking((current) => ({ ...current, paymentMethod }))
+    setPaymentStatus('')
+    setPaymentCheckoutId('')
+    setBookingMessage('')
+  }
 
   const openDateTimePicker = (event) => {
     const input = event.target.closest?.('input[type="date"], input[type="time"]')
@@ -33,13 +91,30 @@ function App() {
 
   const submitBooking = async (event) => {
     event.preventDefault()
-    setBookingMessage('Sending your booking...')
-    const response = await fetch('/api/bookings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...booking, service: selectedService.name }) })
-    const data = await response.json()
-    if (!response.ok) return setBookingMessage(data.error)
-    const text = `Hi TOP RANKING BARBERS! I would like to book the ${selectedService.name} for ${booking.date} at ${booking.time}. Name: ${booking.name}. Phone: ${booking.phone}.`
-    window.open(`${whatsappLink(site.whatsapp)}?text=${encodeURIComponent(text)}`, '_blank', 'noopener,noreferrer')
-    setBookingMessage('Booking prepared. WhatsApp is opening now.')
+    setIsBookingSubmitting(true)
+    setBookingMessage(booking.paymentMethod === 'queue' ? 'Sending your booking...' : 'Starting your M-Pesa payment...')
+    try {
+      if (booking.paymentMethod === 'queue') {
+        const response = await fetch('/api/bookings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...booking, service: selectedService.name }) })
+        const data = await response.json()
+        if (!response.ok) throw new Error(data.error || 'Unable to prepare your booking')
+        const text = `Hi TOP RANKING BARBERS! I would like to join the queue for the ${selectedService.name} on ${booking.date} at ${booking.time}. Name: ${booking.name}. Phone: ${booking.phone}.`
+        window.open(`${whatsappLink(site.whatsapp)}?text=${encodeURIComponent(text)}`, '_blank', 'noopener,noreferrer')
+        setBookingMessage('Booking prepared. WhatsApp is opening now.')
+        return
+      }
+
+      const response = await fetch('/api/payments/daraja/stk-push', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...booking, service: selectedService.name }) })
+      const data = await response.json()
+      if (!response.ok) throw new Error(data.error || 'Unable to start M-Pesa payment')
+      setPaymentStatus('pending')
+      setPaymentCheckoutId(data.checkoutRequestId)
+      setBookingMessage(data.message)
+    } catch (error) {
+      setBookingMessage(error.message)
+    } finally {
+      setIsBookingSubmitting(false)
+    }
   }
 
   const loadAdmin = async (token) => {
@@ -99,7 +174,7 @@ function App() {
         <section id="visit" className="visit wrap"><div><p className="eyebrow">03 / Find us</p><h2>Come through.<br /><i>Leave sharper.</i></h2></div><div className="visit-details"><p>We are ready when you are.<br />Walk-ins welcome, bookings preferred.</p><a className="button button-dark" href={whatsappLink(site.whatsapp)} target="_blank" rel="noreferrer">WhatsApp us <span>↗</span></a><p className="contact">+254 710 865 376<br />{site.location}</p></div></section>
       </main>
       <footer className="footer wrap"><span>TOP RANKING BARBERS</span><span>Sharp minds. Sharper cuts.</span><button onClick={() => setAdminOpen(true)}>Staff access</button></footer>
-      {selectedService && <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setSelectedService(null)}><form className="modal booking-modal" onSubmit={submitBooking}><button type="button" className="close" onClick={() => setSelectedService(null)}>×</button><p className="eyebrow">Book your chair</p><h2>{selectedService.name}</h2><p className="modal-price">{currency(selectedService.price)}</p><label>Name<input required value={booking.name} onChange={(event) => setBooking({ ...booking, name: event.target.value })} /></label><label>Phone number<input required type="tel" value={booking.phone} onChange={(event) => setBooking({ ...booking, phone: event.target.value })} /></label><div className="form-row"><label>Date<input required type="date" value={booking.date} onChange={(event) => setBooking({ ...booking, date: event.target.value })} /></label><label>Time<input required type="time" value={booking.time} onChange={(event) => setBooking({ ...booking, time: event.target.value })} /></label></div><button className="button button-dark submit" type="submit">Continue to WhatsApp <span>↗</span></button>{bookingMessage && <p className="form-message">{bookingMessage}</p>}</form></div>}
+      {selectedService && <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setSelectedService(null)}><form className="modal booking-modal" onSubmit={submitBooking}><button type="button" className="close" onClick={() => setSelectedService(null)}>×</button><p className="eyebrow">Book your chair</p><h2>{selectedService.name}</h2><p className="modal-price">{currency(selectedService.price)}</p><label>Name<input required value={booking.name} onChange={(event) => setBooking({ ...booking, name: event.target.value })} /></label><label>Phone number<input required type="tel" value={booking.phone} onChange={(event) => setBooking({ ...booking, phone: event.target.value })} /></label><div className="form-row"><label>Date<input required type="date" value={booking.date} onChange={(event) => setBooking({ ...booking, date: event.target.value })} /></label><label>Time<input required type="time" value={booking.time} onChange={(event) => setBooking({ ...booking, time: event.target.value })} /></label></div><fieldset className="booking-choice-group" disabled={paymentStatus === 'pending' || paymentStatus === 'paid'}><legend>Choose how to book</legend><button type="button" className={`booking-choice ${booking.paymentMethod === 'queue' ? 'selected' : ''}`} onClick={() => chooseBookingMethod('queue')}><strong>Join the queue</strong><span>Book now and pay at the shop</span></button><button type="button" className={`booking-choice ${booking.paymentMethod === 'mpesa' ? 'selected' : ''}`} onClick={() => chooseBookingMethod('mpesa')}><strong>Pay now with M-Pesa</strong><span>Pay {currency(selectedService.price)} by STK Push</span></button></fieldset>{paymentStatus === 'paid' ? <a className="button button-dark submit" href={`${whatsappLink(site.whatsapp)}?text=${encodeURIComponent(`Hi TOP RANKING BARBERS! My M-Pesa payment for ${selectedService.name} is confirmed${paymentReceipt ? ` (receipt ${paymentReceipt})` : ''}. Booking: ${booking.date} at ${booking.time}. Name: ${booking.name}. Phone: ${booking.phone}.`)}`} target="_blank" rel="noreferrer">Send booking on WhatsApp <span>↗</span></a> : <button className="button button-dark submit" type="submit" disabled={isBookingSubmitting || paymentStatus === 'pending'}>{isBookingSubmitting ? 'Please wait…' : paymentStatus === 'pending' ? 'Waiting for M-Pesa confirmation…' : booking.paymentMethod === 'queue' ? 'Continue to WhatsApp' : `Pay ${currency(selectedService.price)} with M-Pesa`} <span>↗</span></button>}{paymentStatus === 'failed' && <button type="button" className="payment-retry" onClick={() => chooseBookingMethod(booking.paymentMethod)}>Try M-Pesa again</button>}{bookingMessage && <p className="form-message" role="status">{bookingMessage}</p>}</form></div>}
       {adminOpen && <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setAdminOpen(false)}><div className={`modal admin-modal ${adminToken ? 'dashboard-modal' : ''}`}><button type="button" className="close" onClick={() => setAdminOpen(false)}>×</button>{!adminToken ? <><p className="eyebrow">Staff only</p><h2>Admin access</h2><form onSubmit={loginAdmin}><label>Username<input required value={admin.username} onChange={(event) => setAdmin({ ...admin, username: event.target.value })} /></label><label>Password<input required type="password" value={admin.password} onChange={(event) => setAdmin({ ...admin, password: event.target.value })} /></label><button className="button button-dark submit">Sign in <span>↗</span></button>{adminMessage && <p className="form-message">{adminMessage}</p>}</form></> : <><div className="dashboard-head"><div><p className="eyebrow">Control room</p><h2>Welcome to Top Ranking.</h2></div><span className="live-badge">Live menu</span></div><div className="dashboard-grid"><section className="dashboard-panel"><div className="panel-heading"><h3>Bookings</h3><span>{adminData?.bookings.length || 0} total</span></div><form className="admin-booking-form" onSubmit={addAdminBooking}><p className="panel-label">Add a booking</p><div className="form-row"><input required placeholder="Client name" value={newBooking.name} onChange={(event) => setNewBooking({ ...newBooking, name: event.target.value })} /><input required placeholder="Phone number" value={newBooking.phone} onChange={(event) => setNewBooking({ ...newBooking, phone: event.target.value })} /></div><div className="form-row"><select required value={newBooking.service} onChange={(event) => setNewBooking({ ...newBooking, service: event.target.value })}><option value="">Choose service</option>{adminData?.services.map((service) => <option key={service.id} value={service.name}>{service.name}</option>)}</select><input required type="date" value={newBooking.date} onChange={(event) => setNewBooking({ ...newBooking, date: event.target.value })} /><input required type="time" value={newBooking.time} onChange={(event) => setNewBooking({ ...newBooking, time: event.target.value })} /></div><button className="button button-dark submit">Add booking <span>+</span></button></form><div className="admin-bookings">{adminData?.bookings.length ? adminData.bookings.map((item) => <p key={item.id}><strong>{item.name}</strong> · {item.service}<br />{item.date} at {item.time} · {item.phone}</p>) : <p>No bookings yet.</p>}</div></section><section className="dashboard-panel"><div className="panel-heading"><h3>Customer menu</h3><button type="button" className="add-menu" onClick={addMenuItem}>+ Add item</button></div><p className="panel-help">Edit prices, descriptions, and images customers see on the website.</p><form onSubmit={saveServices}>{adminData?.services.map((service, index) => <div className="menu-editor" key={service.id}><div className="menu-editor-top"><strong>0{index + 1}</strong><button type="button" onClick={() => setAdminData((current) => ({ ...current, services: current.services.filter((_, itemIndex) => itemIndex !== index) }))}>Remove</button></div><input required placeholder="Service name" value={service.name} onChange={(event) => updateMenuItem(index, 'name', event.target.value)} /><textarea required placeholder="Description" rows="2" value={service.description} onChange={(event) => updateMenuItem(index, 'description', event.target.value)} /><input required type="number" min="0" placeholder="Price in R" value={service.price} onChange={(event) => updateMenuItem(index, 'price', event.target.value)} /><input placeholder="Menu image URL" value={service.image || ''} onChange={(event) => updateMenuItem(index, 'image', event.target.value)} /></div>)}<button className="button button-dark submit">Save customer menu <span>↗</span></button></form></section></div><form className="gallery-editor" onSubmit={saveImages}><div className="panel-heading"><h3>Gallery images</h3><span>Admin only</span></div><textarea name="urls" defaultValue={site.images.map((image) => image.url).join('\n')} rows="3" /><button className="button button-dark submit">Save gallery <span>↗</span></button></form>{adminMessage && <p className="form-message">{adminMessage}</p>}</>}</div></div>}
     </div>
   )

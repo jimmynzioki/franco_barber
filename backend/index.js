@@ -13,7 +13,11 @@ const adminPassword = process.env.ADMIN_PASSWORD
 const whatsappNumber = process.env.WHATSAPP_NUMBER || '+254710865376'
 const mongoUri = process.env.MONGODB_URI
 const mongoDbName = process.env.MONGODB_DB_NAME || 'sheevybarbers'
+const darajaEnvironment = process.env.DARAJA_ENVIRONMENT || 'sandbox'
+const darajaBaseUrl = darajaEnvironment === 'production' ? 'https://api.safaricom.co.ke' : 'https://sandbox.safaricom.co.ke'
 const sessions = new Set()
+let darajaAccessToken
+let darajaTokenExpiresAt = 0
 
 if (!mongoUri) {
 	console.error('MONGODB_URI is required. Copy backend/.env.example to backend/.env and set it.')
@@ -80,6 +84,51 @@ function readSeedSite() {
 	try { return normalizeSite(JSON.parse(fs.readFileSync(dataPath, 'utf8'))) } catch { return defaultSite }
 }
 
+function getDarajaConfigurationError() {
+	if (!['sandbox', 'production'].includes(darajaEnvironment)) return 'DARAJA_ENVIRONMENT must be sandbox or production'
+	if (!process.env.DARAJA_CONSUMER_KEY || !process.env.DARAJA_CONSUMER_SECRET || !process.env.DARAJA_PASSKEY || !process.env.DARAJA_SHORTCODE || !process.env.DARAJA_TRANSACTION_TYPE || !process.env.DARAJA_CALLBACK_URL) {
+		return 'M-Pesa pay-now is not configured. Set the Daraja credentials, shortcode, transaction type, and public HTTPS callback URL in the backend environment.'
+	}
+	if (!['CustomerPayBillOnline', 'CustomerBuyGoodsOnline'].includes(process.env.DARAJA_TRANSACTION_TYPE)) return 'DARAJA_TRANSACTION_TYPE must be CustomerPayBillOnline or CustomerBuyGoodsOnline'
+	if (!/^https:\/\/.+/.test(process.env.DARAJA_CALLBACK_URL)) return 'DARAJA_CALLBACK_URL must be a public HTTPS URL'
+	return null
+}
+
+async function getDarajaAccessToken() {
+	if (darajaAccessToken && Date.now() < darajaTokenExpiresAt) return darajaAccessToken
+
+	const credentials = Buffer.from(`${process.env.DARAJA_CONSUMER_KEY}:${process.env.DARAJA_CONSUMER_SECRET}`).toString('base64')
+	const response = await fetch(`${darajaBaseUrl}/oauth/v1/generate?grant_type=client_credentials`, {
+		headers: { Authorization: `Basic ${credentials}` },
+		signal: AbortSignal.timeout(15000),
+	})
+	const data = await response.json()
+	if (!response.ok || !data.access_token) throw new Error('Unable to authenticate with Daraja')
+	darajaAccessToken = data.access_token
+	darajaTokenExpiresAt = Date.now() + Math.max(0, Number(data.expires_in || 0) - 60) * 1000
+	return darajaAccessToken
+}
+
+function darajaTimestamp() {
+	return new Intl.DateTimeFormat('en-GB', {
+		timeZone: 'Africa/Nairobi',
+		year: 'numeric',
+		month: '2-digit',
+		day: '2-digit',
+		hour: '2-digit',
+		minute: '2-digit',
+		second: '2-digit',
+		hourCycle: 'h23',
+	}).format(new Date()).replace(/\D/g, '')
+}
+
+function normalizeKenyanPhone(phone) {
+	const digits = String(phone || '').replace(/\D/g, '')
+	if (/^0[17]\d{8}$/.test(digits)) return `254${digits.slice(1)}`
+	if (/^254[17]\d{8}$/.test(digits)) return digits
+	throw new Error('Enter a valid Kenyan mobile number, for example 0712345678')
+}
+
 async function start() {
 	const mongoClient = new MongoClient(mongoUri)
 	await mongoClient.connect()
@@ -97,6 +146,117 @@ async function start() {
 	app.get('/api/site', async (request, response) => {
 		const site = await siteCollection.findOne({ _id: 'main' }, { projection: { _id: 0, updatedAt: 0 } })
 		response.json(normalizeSite(site || defaultSite))
+	})
+
+	app.post('/api/payments/daraja/stk-push', async (request, response) => {
+		const configurationError = getDarajaConfigurationError()
+		if (configurationError) return response.status(503).json({ error: configurationError })
+
+		const { name, phone, service, date, time } = request.body
+		if (!name || !phone || !service || !date || !time) return response.status(400).json({ error: 'Please complete every booking field' })
+
+		let customerPhone
+		try { customerPhone = normalizeKenyanPhone(phone) } catch (error) { return response.status(400).json({ error: error.message }) }
+
+		const site = await siteCollection.findOne({ _id: 'main' }, { projection: { _id: 0 } })
+		const selectedService = normalizeSite(site || defaultSite).services.find((item) => item.name === service)
+		if (!selectedService) return response.status(400).json({ error: 'That service is no longer available. Please refresh and choose it again.' })
+		const amount = Number(selectedService.price)
+		if (!Number.isSafeInteger(amount) || amount < 1) return response.status(400).json({ error: 'This service does not have a valid payment amount' })
+
+		const booking = {
+			id: crypto.randomUUID(),
+			name: String(name).trim(),
+			phone: customerPhone,
+			service: selectedService.name,
+			date,
+			time,
+			amount,
+			paymentMethod: 'mpesa',
+			paymentStatus: 'pending',
+			createdAt: new Date().toISOString(),
+			source: 'customer',
+		}
+		await bookingsCollection.insertOne(booking)
+
+		let stkPushStarted = false
+		let checkoutRequestId
+		try {
+			const accessToken = await getDarajaAccessToken()
+			const timestamp = darajaTimestamp()
+			const shortcode = process.env.DARAJA_SHORTCODE
+			const password = Buffer.from(`${shortcode}${process.env.DARAJA_PASSKEY}${timestamp}`).toString('base64')
+			stkPushStarted = true
+			const darajaResponse = await fetch(`${darajaBaseUrl}/mpesa/stkpush/v1/processrequest`, {
+				method: 'POST',
+				headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+				body: JSON.stringify({
+					BusinessShortCode: shortcode,
+					Password: password,
+					Timestamp: timestamp,
+					TransactionType: process.env.DARAJA_TRANSACTION_TYPE,
+					Amount: amount,
+					PartyA: customerPhone,
+					PartyB: shortcode,
+					PhoneNumber: customerPhone,
+					CallBackURL: process.env.DARAJA_CALLBACK_URL,
+					AccountReference: 'TopRanking',
+					TransactionDesc: selectedService.name.slice(0, 13),
+				}),
+				signal: AbortSignal.timeout(20000),
+			})
+			const data = await darajaResponse.json()
+			if (!darajaResponse.ok || String(data.ResponseCode) !== '0' || !data.CheckoutRequestID) {
+				await bookingsCollection.updateOne({ id: booking.id }, { $set: { paymentStatus: 'failed', paymentError: data.errorMessage || data.ResponseDescription || 'Daraja rejected the payment request' } })
+				return response.status(502).json({ error: data.errorMessage || data.ResponseDescription || 'Daraja could not start the M-Pesa payment. Please try again.' })
+			}
+
+			checkoutRequestId = data.CheckoutRequestID
+			await bookingsCollection.updateOne({ id: booking.id }, {
+				$set: { checkoutRequestId, merchantRequestId: data.MerchantRequestID },
+			})
+			response.status(202).json({ checkoutRequestId, message: 'Check your phone and enter your M-Pesa PIN to complete payment.' })
+		} catch (error) {
+			console.error('Daraja STK Push failed:', error.message)
+			if (stkPushStarted) {
+				await bookingsCollection.updateOne({ id: booking.id }, { $set: { paymentError: 'Daraja request outcome is unknown; verify before retrying' } })
+				return response.status(202).json({
+					checkoutRequestId,
+					message: checkoutRequestId
+						? 'Payment request sent. Waiting for M-Pesa confirmation.'
+						: 'Payment status is unclear. Check your phone and do not retry yet; contact the shop if no M-Pesa prompt arrives.',
+				})
+			}
+			await bookingsCollection.updateOne({ id: booking.id }, { $set: { paymentStatus: 'failed', paymentError: 'Daraja authentication failed' } })
+			response.status(502).json({ error: 'Unable to start the M-Pesa payment. Please try again.' })
+		}
+	})
+
+	app.post('/api/payments/daraja/callback', async (request, response) => {
+		const callback = request.body?.Body?.stkCallback
+		if (!callback?.CheckoutRequestID || callback.ResultCode === undefined || callback.ResultCode === null || !Number.isInteger(Number(callback.ResultCode))) return response.status(400).json({ ResultCode: 1, ResultDesc: 'Invalid callback payload' })
+
+		const resultCode = Number(callback.ResultCode)
+		const items = callback.CallbackMetadata?.Item || []
+		const receiptNumber = items.find((item) => item.Name === 'MpesaReceiptNumber')?.Value
+		const update = resultCode === 0
+			? { paymentStatus: 'paid', paidAt: new Date().toISOString(), ...(receiptNumber ? { mpesaReceiptNumber: String(receiptNumber) } : {}) }
+			: { paymentStatus: 'failed', paymentError: String(callback.ResultDesc || 'M-Pesa payment was not completed').slice(0, 200) }
+		const result = await bookingsCollection.updateOne(
+			{ checkoutRequestId: callback.CheckoutRequestID, paymentMethod: 'mpesa', paymentStatus: 'pending' },
+			{ $set: update },
+		)
+		if (!result.matchedCount) console.warn('Daraja callback did not match a pending booking')
+		response.json({ ResultCode: 0, ResultDesc: 'Accepted' })
+	})
+
+	app.get('/api/payments/daraja/:checkoutRequestId', async (request, response) => {
+		const booking = await bookingsCollection.findOne(
+			{ checkoutRequestId: request.params.checkoutRequestId, paymentMethod: 'mpesa', source: 'customer' },
+			{ projection: { _id: 0, paymentStatus: 1, mpesaReceiptNumber: 1 } },
+		)
+		if (!booking) return response.status(404).json({ error: 'Payment request not found' })
+		response.json(booking)
 	})
 
 	app.post('/api/admin/login', (request, response) => {
