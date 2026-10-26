@@ -87,7 +87,7 @@ function readSeedSite() {
 function getDarajaConfigurationError() {
 	if (!['sandbox', 'production'].includes(darajaEnvironment)) return 'DARAJA_ENVIRONMENT must be sandbox or production'
 	if (!process.env.DARAJA_CONSUMER_KEY || !process.env.DARAJA_CONSUMER_SECRET || !process.env.DARAJA_PASSKEY || !process.env.DARAJA_SHORTCODE || !process.env.DARAJA_TRANSACTION_TYPE || !process.env.DARAJA_CALLBACK_URL) {
-		return 'M-Pesa pay-now is not configured. Set the Daraja credentials, shortcode, transaction type, and public HTTPS callback URL in the backend environment.'
+		return 'M-Pesa is currently unavailable. This option is for development only.'
 	}
 	if (!['CustomerPayBillOnline', 'CustomerBuyGoodsOnline'].includes(process.env.DARAJA_TRANSACTION_TYPE)) return 'DARAJA_TRANSACTION_TYPE must be CustomerPayBillOnline or CustomerBuyGoodsOnline'
 	if (!/^https:\/\/.+/.test(process.env.DARAJA_CALLBACK_URL)) return 'DARAJA_CALLBACK_URL must be a public HTTPS URL'
@@ -124,9 +124,8 @@ function darajaTimestamp() {
 
 function normalizeKenyanPhone(phone) {
 	const digits = String(phone || '').replace(/\D/g, '')
-	if (/^0[17]\d{8}$/.test(digits)) return `254${digits.slice(1)}`
-	if (/^254[17]\d{8}$/.test(digits)) return digits
-	throw new Error('Enter a valid Kenyan mobile number, for example 0712345678')
+	if (!/^0[17]\d{8}$/.test(digits)) throw new Error('Phone number must be exactly 10 digits, for example 0712345678')
+	return `254${digits.slice(1)}`
 }
 
 async function start() {
@@ -311,7 +310,9 @@ async function start() {
 	app.post('/api/bookings', async (request, response) => {
 		const { name, phone, service, date, time } = request.body
 		if (!name || !phone || !service || !date || !time) return response.status(400).json({ error: 'Please complete every booking field' })
-		const booking = { id: crypto.randomUUID(), name, phone, service, date, time, createdAt: new Date().toISOString(), source: 'customer' }
+		const digits = String(phone).replace(/\D/g, '')
+		if (!/^0[17]\d{8}$/.test(digits)) return response.status(400).json({ error: 'Phone number must be exactly 10 digits, for example 0712345678' })
+		const booking = { id: crypto.randomUUID(), name, phone: digits, service, date, time, createdAt: new Date().toISOString(), source: 'customer' }
 		await bookingsCollection.insertOne(booking)
 		response.status(201).json({ booking })
 	})
