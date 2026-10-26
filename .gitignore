@@ -1,4 +1,4 @@
-backend/.env
-backend/site-data.json
-client/dist
-node_modules
+# Environment variables
+.env
+.env.*
+!.env.example

@@ -33,7 +33,7 @@ app.use(express.json({ limit: '1mb' }))
 app.use((request, response, next) => {
 	response.setHeader('Access-Control-Allow-Origin', '*')
 	response.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization')
-	response.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, OPTIONS')
+	response.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
 	if (request.method === 'OPTIONS') return response.sendStatus(204)
 	next()
 })
@@ -275,9 +275,22 @@ async function start() {
 	app.post('/api/admin/bookings', requireAdmin, async (request, response) => {
 		const { name, phone, service, date, time } = request.body
 		if (!name || !phone || !service || !date || !time) return response.status(400).json({ error: 'Please complete every booking field' })
-		const booking = { id: crypto.randomUUID(), name, phone, service, date, time, createdAt: new Date().toISOString(), source: 'admin' }
+		const booking = { id: crypto.randomUUID(), name, phone, service, date, time, done: false, createdAt: new Date().toISOString(), source: 'admin' }
 		await bookingsCollection.insertOne(booking)
 		response.status(201).json({ booking })
+	})
+
+	app.put('/api/admin/bookings/:id', requireAdmin, async (request, response) => {
+		if (request.body.done !== true && request.body.done !== false) return response.status(400).json({ error: 'Booking status is required' })
+		const result = await bookingsCollection.updateOne({ id: request.params.id }, { $set: { done: request.body.done, updatedAt: new Date().toISOString() } })
+		if (!result.matchedCount) return response.status(404).json({ error: 'Booking not found' })
+		response.json({ id: request.params.id, done: request.body.done })
+	})
+
+	app.delete('/api/admin/bookings/:id', requireAdmin, async (request, response) => {
+		const result = await bookingsCollection.deleteOne({ id: request.params.id })
+		if (!result.deletedCount) return response.status(404).json({ error: 'Booking not found' })
+		response.status(204).send()
 	})
 
 	app.put('/api/admin/services', requireAdmin, async (request, response) => {
