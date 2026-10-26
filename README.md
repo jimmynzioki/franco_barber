@@ -19,7 +19,7 @@ npm install
 npm run dev
 ```
 
-Open the Vite URL shown in the terminal. TOP RANKING BARBERS is located at `Kasarani, Mwiki, Mlima Stage`. Clients can browse services, submit a booking, and continue directly to WhatsApp at `+254710865376`. Bookings are stored by the backend for the current server session.
+Open the Vite URL shown in the terminal. TOP RANKING BARBERS is located at `Kasarani, Mwiki, Mlima Stage`. Clients can browse services, submit a booking, and continue directly to WhatsApp at `0701 060503`. Bookings are stored by the backend for the current server session.
 
 Admin access is available from the `Admin` link. Configure credentials with `ADMIN_USERNAME` and `ADMIN_PASSWORD` in the private `backend/.env` file.
 
