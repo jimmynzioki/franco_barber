@@ -5,6 +5,8 @@ const crypto = require('crypto')
 const fs = require('fs')
 const path = require('path')
 const { MongoClient } = require('mongodb')
+const multer = require('multer')
+const cloudinary = require('cloudinary').v2
 
 const app = express()
 const port = process.env.PORT || 4000
@@ -18,6 +20,21 @@ const darajaBaseUrl = darajaEnvironment === 'production' ? 'https://api.safarico
 const sessions = new Set()
 let darajaAccessToken
 let darajaTokenExpiresAt = 0
+
+cloudinary.config({
+	cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+	api_key: process.env.CLOUDINARY_API_KEY,
+	api_secret: process.env.CLOUDINARY_API_SECRET,
+})
+
+const imageUpload = multer({
+	storage: multer.memoryStorage(),
+	limits: { fileSize: 8 * 1024 * 1024 },
+	fileFilter: (request, file, callback) => {
+		if (!file.mimetype.startsWith('image/')) return callback(new Error('Only image files can be uploaded'))
+		callback(null, true)
+	},
+})
 
 if (!mongoUri) {
 	console.error('MONGODB_URI is required. Copy backend/.env.example to backend/.env and set it.')
@@ -298,6 +315,26 @@ async function start() {
 		const services = request.body.services.slice(0, 12).map((service, index) => ({ id: service.id || `service-${index + 1}`, name: service.name, description: service.description, price: Number(service.price), image: service.image || service.imageUrl || service.image_url || defaultSite.services[index % defaultSite.services.length].image }))
 		await siteCollection.updateOne({ _id: 'main' }, { $set: { services, updatedAt: new Date() } }, { upsert: true })
 		response.json({ services })
+	})
+
+	app.post('/api/admin/images/upload', requireAdmin, imageUpload.single('image'), async (request, response) => {
+		if (!request.file) return response.status(400).json({ error: 'Choose an image to upload' })
+		if (!process.env.CLOUDINARY_CLOUD_NAME || !process.env.CLOUDINARY_API_KEY || !process.env.CLOUDINARY_API_SECRET) {
+			return response.status(503).json({ error: 'Cloudinary is not configured' })
+		}
+		try {
+			const result = await new Promise((resolve, reject) => {
+				cloudinary.uploader.upload_stream({
+					folder: 'top-ranking-barbers/gallery',
+					resource_type: 'image',
+					transformation: [{ width: 1600, height: 1600, crop: 'limit', quality: 'auto', fetch_format: 'auto' }],
+				}, (error, upload) => error ? reject(error) : resolve(upload)).end(request.file.buffer)
+			})
+			response.status(201).json({ url: result.secure_url, publicId: result.public_id })
+		} catch (error) {
+			console.error('Cloudinary upload failed:', error.message)
+			response.status(502).json({ error: 'Image upload failed. Please try again.' })
+		}
 	})
 
 	app.put('/api/admin/images', requireAdmin, async (request, response) => {
