@@ -121,8 +121,14 @@ async function getDarajaAccessToken() {
 		headers: { Authorization: `Basic ${credentials}` },
 		signal: AbortSignal.timeout(15000),
 	})
-	const data = await response.json()
-	if (!response.ok || !data.access_token) throw new Error('Unable to authenticate with Daraja')
+	const responseBody = await response.text()
+	let data
+	try { data = responseBody ? JSON.parse(responseBody) : {} } catch { data = { rawResponse: responseBody } }
+	if (!data || typeof data !== 'object') data = { rawResponse: responseBody }
+	if (!response.ok || !data.access_token) {
+		const detail = data.error_description || data.errorMessage || data.rawResponse || `Daraja authentication failed with HTTP ${response.status}`
+		throw new Error(String(detail).slice(0, 500))
+	}
 	darajaAccessToken = data.access_token
 	darajaTokenExpiresAt = Date.now() + Math.max(0, Number(data.expires_in || 0) - 60) * 1000
 	return darajaAccessToken
@@ -143,8 +149,13 @@ function darajaTimestamp() {
 
 function normalizeKenyanPhone(phone) {
 	const digits = String(phone || '').replace(/\D/g, '')
-	if (!/^0[17]\d{8}$/.test(digits)) throw new Error('Phone number must be exactly 10 digits, for example 0712345678')
-	return `254${digits.slice(1)}`
+	const nationalNumber = /^0[17]\d{8}$/.test(digits)
+		? digits.slice(1)
+		: /^254[17]\d{8}$/.test(digits)
+			? digits.slice(3)
+			: null
+	if (!nationalNumber) throw new Error('Enter a valid Kenyan mobile number, for example 0712345678 or +254712345678')
+	return `254${nationalNumber}`
 }
 
 async function start() {
@@ -170,17 +181,19 @@ async function start() {
 		const configurationError = getDarajaConfigurationError()
 		if (configurationError) return response.status(503).json({ error: configurationError })
 
-		const { name, phone, service, date, time } = request.body
-		if (!name || !phone || !service || !date || !time) return response.status(400).json({ error: 'Please complete every booking field' })
+		const { name, phone, serviceId, amount: displayedAmount, date, time } = request.body
+		if (!name || !phone || !serviceId || !date || !time) return response.status(400).json({ error: 'Please complete every booking field' })
 
 		let customerPhone
 		try { customerPhone = normalizeKenyanPhone(phone) } catch (error) { return response.status(400).json({ error: error.message }) }
 
 		const site = await siteCollection.findOne({ _id: 'main' }, { projection: { _id: 0 } })
-		const selectedService = normalizeSite(site || defaultSite).services.find((item) => item.name === service)
+		const selectedService = normalizeSite(site || defaultSite).services.find((item) => item.id === serviceId)
 		if (!selectedService) return response.status(400).json({ error: 'That service is no longer available. Please refresh and choose it again.' })
 		const amount = Number(selectedService.price)
 		if (!Number.isSafeInteger(amount) || amount < 1) return response.status(400).json({ error: 'This service does not have a valid payment amount' })
+		if (!Number.isSafeInteger(displayedAmount)) return response.status(400).json({ error: 'The displayed service amount is invalid. Please refresh and try again.' })
+		if (displayedAmount !== amount) return response.status(409).json({ error: 'The service price has changed. Please refresh and select it again.' })
 
 		const booking = {
 			id: crypto.randomUUID(),
@@ -227,10 +240,15 @@ async function start() {
 				}),
 				signal: AbortSignal.timeout(20000),
 			})
-			const data = await darajaResponse.json()
+			const responseBody = await darajaResponse.text()
+			let data
+			try { data = responseBody ? JSON.parse(responseBody) : {} } catch { data = { rawResponse: responseBody } }
+			if (!data || typeof data !== 'object') data = { rawResponse: responseBody }
 			if (!darajaResponse.ok || String(data.ResponseCode) !== '0' || !data.CheckoutRequestID) {
-				await bookingsCollection.updateOne({ id: booking.id }, { $set: { paymentStatus: 'failed', paymentError: data.errorMessage || data.ResponseDescription || 'Daraja rejected the payment request' } })
-				return response.status(502).json({ error: data.errorMessage || data.ResponseDescription || 'Daraja could not start the M-Pesa payment. Please try again.' })
+				console.error('Daraja STK Push rejected:', JSON.stringify({ status: darajaResponse.status, response: data }))
+				const detail = data.errorMessage || data.ResponseDescription || data.error || data.rawResponse || `Daraja returned HTTP ${darajaResponse.status}`
+				await bookingsCollection.updateOne({ id: booking.id }, { $set: { paymentStatus: 'failed', paymentError: String(detail).slice(0, 500) } })
+				return response.status(502).json({ error: String(detail).slice(0, 500) })
 			}
 
 			checkoutRequestId = data.CheckoutRequestID
@@ -241,7 +259,7 @@ async function start() {
 		} catch (error) {
 			console.error('Daraja STK Push failed:', error.message)
 			if (stkPushStarted) {
-				await bookingsCollection.updateOne({ id: booking.id }, { $set: { paymentError: 'Daraja request outcome is unknown; verify before retrying' } })
+				await bookingsCollection.updateOne({ id: booking.id }, { $set: { paymentError: `Daraja request outcome is unknown: ${error.message}`.slice(0, 500) } })
 				return response.status(202).json({
 					checkoutRequestId,
 					message: checkoutRequestId
@@ -249,8 +267,8 @@ async function start() {
 						: 'Payment status is unclear. Check your phone and do not retry yet; contact the shop if no M-Pesa prompt arrives.',
 				})
 			}
-			await bookingsCollection.updateOne({ id: booking.id }, { $set: { paymentStatus: 'failed', paymentError: 'Daraja authentication failed' } })
-			response.status(502).json({ error: 'Unable to start the M-Pesa payment. Please try again.' })
+			await bookingsCollection.updateOne({ id: booking.id }, { $set: { paymentStatus: 'failed', paymentError: String(error.message).slice(0, 500) } })
+			response.status(502).json({ error: error.message })
 		}
 	})
 
@@ -275,7 +293,7 @@ async function start() {
 	app.get('/api/payments/daraja/:checkoutRequestId', async (request, response) => {
 		const booking = await bookingsCollection.findOne(
 			{ checkoutRequestId: request.params.checkoutRequestId, paymentMethod: 'mpesa', source: 'customer' },
-			{ projection: { _id: 0, paymentStatus: 1, mpesaReceiptNumber: 1 } },
+			{ projection: { _id: 0, paymentStatus: 1, mpesaReceiptNumber: 1, paymentError: 1 } },
 		)
 		if (!booking) return response.status(404).json({ error: 'Payment request not found' })
 		response.json(booking)
