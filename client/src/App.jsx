@@ -35,7 +35,6 @@ function App() {
   const [adminMessage, setAdminMessage] = useState('')
   const [bookingFilter, setBookingFilter] = useState('all')
   const [receiptBooking, setReceiptBooking] = useState(null)
-  const [adminNavOpen, setAdminNavOpen] = useState(false)
   const [newBooking, setNewBooking] = useState({ name: '', phone: '', service: '', date: '', time: '' })
   const [isGalleryUploading, setIsGalleryUploading] = useState(false)
   const [uploadingMenuImageIndex, setUploadingMenuImageIndex] = useState(null)
@@ -314,24 +313,22 @@ function App() {
                 {adminMessage && <p className="form-message">{adminMessage}</p>}
               </form>
             </> : <>
-              <div className={`admin-workspace ${adminNavOpen ? 'nav-open' : ''}`}>
-                {adminNavOpen && <button type="button" className="admin-nav-backdrop" aria-label="Close admin navigation" onClick={() => setAdminNavOpen(false)} />}
-                <aside className={`admin-sidebar ${adminNavOpen ? 'is-open' : ''}`}>
+              <div className="admin-workspace">
+                <aside className="admin-sidebar">
                   <a className="admin-brand" href="#admin-overview"><span className="brand-mark"><img src={logoUrl} alt="" /></span><span>TOP RANKING<small>BARBERS · ADMIN</small></span></a>
                   <p className="admin-nav-label">Workspace</p>
                   <nav className="admin-nav" aria-label="Admin navigation">
-                    <a href="#admin-overview" aria-current={bookingFilter === 'all' ? 'page' : undefined} onClick={() => { setBookingFilter('all'); setAdminNavOpen(false) }}>Overview / Bookings</a>
-                    <a href="#admin-bookings" aria-current={bookingFilter === 'paid' ? 'page' : undefined} onClick={() => { setBookingFilter('paid'); setAdminNavOpen(false) }}>Paid (M-Pesa)</a>
-                    <a href="#admin-bookings" aria-current={bookingFilter === 'shop' ? 'page' : undefined} onClick={() => { setBookingFilter('shop'); setAdminNavOpen(false) }}>Pay in Shop</a>
-                    <a href="#admin-add-booking" onClick={() => setAdminNavOpen(false)}>Add Booking</a>
-                    <a href="#admin-customer-menu" onClick={() => setAdminNavOpen(false)}>Customer Menu</a>
+                    <a href="#admin-overview" aria-current={bookingFilter === 'all' ? 'page' : undefined} onClick={() => setBookingFilter('all')}>Overview / Bookings</a>
+                    <a href="#admin-bookings" aria-current={bookingFilter === 'paid' ? 'page' : undefined} onClick={() => setBookingFilter('paid')}>Paid (M-Pesa)</a>
+                    <a href="#admin-bookings" aria-current={bookingFilter === 'shop' ? 'page' : undefined} onClick={() => setBookingFilter('shop')}>Pay in Shop</a>
+                    <a href="#admin-add-booking">Add Booking</a>
+                    <a href="#admin-customer-menu">Customer Menu</a>
                   </nav>
                   <a className="admin-live-link" href="#services" onClick={() => setAdminOpen(false)}>↗ View Live Menu</a>
                   <div className="admin-sidebar-foot"><span className="admin-online-dot" />Connected to shop dashboard</div>
                 </aside>
                 <main className="admin-main">
                   <header className="admin-topbar">
-                    <button type="button" className="admin-menu-toggle" aria-label="Toggle admin navigation" aria-expanded={adminNavOpen} onClick={() => setAdminNavOpen((open) => !open)}>☰</button>
                     <span className="admin-topbar-label">Management workspace</span>
                     <button type="button" className="admin-close" onClick={() => setAdminOpen(false)} aria-label="Close admin dashboard">×</button>
                   </header>
