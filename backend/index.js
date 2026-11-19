@@ -15,8 +15,6 @@ const adminPassword = process.env.ADMIN_PASSWORD
 const whatsappNumber = '+254701060503'
 const mongoUri = process.env.MONGODB_URI
 const mongoDbName = process.env.MONGODB_DB_NAME || 'sheevybarbers'
-const darajaEnvironment = process.env.DARAJA_ENVIRONMENT || 'sandbox'
-const darajaBaseUrl = darajaEnvironment === 'production' ? 'https://api.safaricom.co.ke' : 'https://sandbox.safaricom.co.ke'
 const sessions = new Set()
 let darajaAccessToken
 let darajaTokenExpiresAt = 0
@@ -102,12 +100,15 @@ function readSeedSite() {
 }
 
 function getDarajaConfigurationError() {
+	const darajaEnvironment = process.env.DARAJA_ENVIRONMENT || 'sandbox'
+	const transactionType = process.env.DARAJA_TRANSACTION_TYPE || 'CustomerBuyGoodsOnline'
+	const callbackUrl = process.env.DARAJA_CALLBACK_URL?.trim()
 	if (!['sandbox', 'production'].includes(darajaEnvironment)) return 'DARAJA_ENVIRONMENT must be sandbox or production'
-	if (!process.env.DARAJA_CONSUMER_KEY || !process.env.DARAJA_CONSUMER_SECRET || !process.env.DARAJA_PASSKEY || !process.env.DARAJA_SHORTCODE || !process.env.DARAJA_TRANSACTION_TYPE || !process.env.DARAJA_CALLBACK_URL) {
+	if (!process.env.DARAJA_CONSUMER_KEY || !process.env.DARAJA_CONSUMER_SECRET || !process.env.DARAJA_PASSKEY || !process.env.DARAJA_SHORTCODE || !callbackUrl) {
 		return 'M-Pesa is currently unavailable. This option is for development only.'
 	}
-	if (!['CustomerPayBillOnline', 'CustomerBuyGoodsOnline'].includes(process.env.DARAJA_TRANSACTION_TYPE)) return 'DARAJA_TRANSACTION_TYPE must be CustomerPayBillOnline or CustomerBuyGoodsOnline'
-	if (!/^https:\/\/.+/.test(process.env.DARAJA_CALLBACK_URL)) return 'DARAJA_CALLBACK_URL must be a public HTTPS URL'
+	if (!['CustomerPayBillOnline', 'CustomerBuyGoodsOnline'].includes(transactionType)) return 'DARAJA_TRANSACTION_TYPE must be CustomerPayBillOnline or CustomerBuyGoodsOnline'
+	if (!/^https:\/\/.+/.test(callbackUrl)) return 'DARAJA_CALLBACK_URL must be a public HTTPS URL'
 	return null
 }
 
@@ -115,6 +116,7 @@ async function getDarajaAccessToken() {
 	if (darajaAccessToken && Date.now() < darajaTokenExpiresAt) return darajaAccessToken
 
 	const credentials = Buffer.from(`${process.env.DARAJA_CONSUMER_KEY}:${process.env.DARAJA_CONSUMER_SECRET}`).toString('base64')
+	const darajaBaseUrl = process.env.DARAJA_ENVIRONMENT === 'production' ? 'https://api.safaricom.co.ke' : 'https://sandbox.safaricom.co.ke'
 	const response = await fetch(`${darajaBaseUrl}/oauth/v1/generate?grant_type=client_credentials`, {
 		headers: { Authorization: `Basic ${credentials}` },
 		signal: AbortSignal.timeout(15000),
@@ -200,22 +202,26 @@ async function start() {
 		try {
 			const accessToken = await getDarajaAccessToken()
 			const timestamp = darajaTimestamp()
-			const shortcode = process.env.DARAJA_SHORTCODE
-			const password = Buffer.from(`${shortcode}${process.env.DARAJA_PASSKEY}${timestamp}`).toString('base64')
+			const transactionType = process.env.DARAJA_TRANSACTION_TYPE || 'CustomerBuyGoodsOnline'
+			const callbackUrl = process.env.DARAJA_CALLBACK_URL.trim()
+			const password = Buffer.from(`${process.env.DARAJA_SHORTCODE}${process.env.DARAJA_PASSKEY}${timestamp}`).toString('base64')
+			const darajaBaseUrl = process.env.DARAJA_ENVIRONMENT === 'production' ? 'https://api.safaricom.co.ke' : 'https://sandbox.safaricom.co.ke'
 			stkPushStarted = true
 			const darajaResponse = await fetch(`${darajaBaseUrl}/mpesa/stkpush/v1/processrequest`, {
 				method: 'POST',
 				headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
 				body: JSON.stringify({
-					BusinessShortCode: shortcode,
+					BusinessShortCode: process.env.DARAJA_SHORTCODE,
 					Password: password,
 					Timestamp: timestamp,
-					TransactionType: process.env.DARAJA_TRANSACTION_TYPE,
+					TransactionType: transactionType,
 					Amount: amount,
 					PartyA: customerPhone,
-					PartyB: shortcode,
+					PartyB: transactionType === 'CustomerBuyGoodsOnline'
+						? process.env.DARAJA_TILL_NUMBER || process.env.DARAJA_SHORTCODE
+						: process.env.DARAJA_SHORTCODE,
 					PhoneNumber: customerPhone,
-					CallBackURL: process.env.DARAJA_CALLBACK_URL,
+					CallBackURL: callbackUrl,
 					AccountReference: 'TopRanking',
 					TransactionDesc: selectedService.name.slice(0, 13),
 				}),
