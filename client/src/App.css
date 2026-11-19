@@ -218,6 +218,200 @@ h1 i, h2 i { color: #f4ce68; }
 .admin-card { box-shadow: 0 8px 26px rgba(37,49,68,.045); }
 .admin-stat { transition: transform .18s ease, box-shadow .18s ease; }
 .admin-stat:hover { transform: translateY(-2px); box-shadow: 0 10px 24px rgba(37,49,68,.075); }
+
+/* Match the admin workspace with the customer's gold and dark theme. */
+.admin-backdrop.is-dashboard {
+  background: #11100f;
+}
+.dashboard-modal {
+  background: linear-gradient(135deg, #0f0f0f 0%, #1b1712 48%, #0f0f0f 100%);
+  color: var(--ink);
+}
+.admin-sidebar,
+.admin-topbar,
+.admin-stat,
+.admin-card {
+  border-color: var(--line);
+  background: rgba(23, 21, 18, .92);
+  color: var(--ink);
+  box-shadow: 0 8px 26px rgba(0, 0, 0, .18);
+}
+.admin-sidebar {
+  border-right-color: var(--line);
+}
+.admin-topbar {
+  border-bottom-color: var(--line);
+  backdrop-filter: blur(14px);
+}
+.admin-brand,
+.dashboard-head h2,
+.admin-card-heading h3,
+.booking-client strong,
+.admin-stat strong {
+  color: var(--ink);
+}
+.admin-brand .brand-mark {
+  background: linear-gradient(135deg, #b38728, #fbf5b7);
+}
+.admin-brand small,
+.admin-nav-label,
+.admin-sidebar-foot,
+.admin-topbar-label,
+.dashboard-head .eyebrow,
+.admin-card .eyebrow,
+.admin-intro,
+.admin-stat > span,
+.admin-stat small,
+.admin-count,
+.booking-service,
+.booking-datetime,
+.booking-phone,
+.booking-status,
+.admin-empty,
+.menu-editor-top strong,
+.admin-menu-card .panel-help,
+.gallery-editor .panel-help {
+  color: var(--muted);
+}
+.admin-nav a {
+  color: var(--muted);
+}
+.admin-nav a[aria-current="page"],
+.admin-nav a:hover {
+  background: rgba(244, 206, 104, .09);
+  color: var(--lime);
+}
+.admin-nav a[aria-current="page"]::before {
+  background: var(--lime);
+}
+.admin-live-link,
+.admin-stat small.stat-accent,
+.admin-card-icon,
+.booking-filters button.selected,
+.menu-image-upload {
+  color: var(--lime);
+}
+.admin-close,
+.admin-card-icon,
+.live-badge,
+.booking-filters button,
+.booking-actions button,
+.menu-editor,
+.admin-menu-grid .menu-editor,
+.menu-editor input,
+.menu-editor textarea,
+.admin-form-fields input,
+.admin-form-fields select,
+.gallery-editor textarea,
+.gallery-editor .gallery-upload-label,
+.admin-message,
+.admin-empty {
+  border-color: var(--line);
+}
+.admin-close {
+  background: #171512;
+  color: var(--muted);
+}
+.live-badge,
+.admin-card-icon,
+.booking-filters button.selected,
+.booking-payment-status.is-paid {
+  background: rgba(244, 206, 104, .1);
+  border-color: var(--line);
+}
+.admin-card-icon {
+  background: rgba(244, 206, 104, .1);
+}
+.booking-filters button {
+  background: transparent;
+  color: var(--muted);
+}
+.booking-filters button.selected {
+  border-color: var(--lime);
+}
+.admin-bookings,
+.admin-booking,
+.admin-sidebar-foot,
+.menu-editor,
+.admin-card,
+.admin-stat,
+.admin-close,
+.gallery-editor .gallery-upload-label {
+  border-color: var(--line);
+}
+.booking-payment-status {
+  background: rgba(255, 255, 255, .05);
+  color: var(--muted);
+}
+.booking-payment-status.is-paid {
+  color: var(--lime);
+}
+.booking-actions button {
+  background: transparent;
+  color: var(--muted);
+}
+.booking-actions button:hover,
+.booking-filters button:hover {
+  border-color: var(--lime);
+  background: rgba(244, 206, 104, .08);
+  color: var(--lime);
+}
+.booking-actions button:last-child,
+.menu-editor-top button {
+  color: #e69a8f;
+}
+.admin-form-fields label,
+.menu-editor > label:not(.menu-image-upload),
+.admin-menu-card .panel-help,
+.gallery-editor .panel-help {
+  color: var(--muted);
+}
+.admin-form-fields input,
+.admin-form-fields select,
+.menu-editor,
+.menu-editor input,
+.menu-editor textarea,
+.gallery-editor textarea,
+.gallery-editor .gallery-upload-label,
+.admin-message {
+  background: #171512;
+  color: var(--ink);
+}
+.admin-form-fields input:focus,
+.admin-form-fields select:focus,
+.menu-editor input:focus,
+.menu-editor textarea:focus,
+.gallery-editor textarea:focus {
+  border-color: var(--lime);
+}
+.admin-form-fields input::placeholder,
+.menu-editor input::placeholder,
+.menu-editor textarea::placeholder,
+.gallery-editor textarea::placeholder {
+  color: #777166;
+}
+.menu-image-upload input,
+.gallery-editor .gallery-upload-input {
+  color: var(--muted);
+  background: transparent;
+}
+.menu-image-upload input::file-selector-button,
+.gallery-editor .gallery-upload-input::file-selector-button {
+  background: linear-gradient(110deg, #b38728, #fbf5b7);
+  color: #17120b;
+}
+.admin-card,
+.admin-stat {
+  border-radius: 14px;
+}
+@media (max-width: 760px) {
+  .admin-sidebar {
+    background: rgba(23, 21, 18, .96);
+  }
+  .admin-booking {
+    border-color: var(--line);
+  }
+}
 .admin-form-fields input[type="date"], .admin-form-fields input[type="time"] { color-scheme: light; }
 .booking-actions button { min-height: 32px; transition: background .15s ease, border-color .15s ease, color .15s ease; }
 .booking-actions button:hover { border-color: #d7c89f; background: #fbf8f0; color: #806528; }
