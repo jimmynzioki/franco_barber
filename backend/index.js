@@ -18,6 +18,7 @@ const mongoDbName = process.env.MONGODB_DB_NAME || 'sheevybarbers'
 const sessions = new Set()
 let darajaAccessToken
 let darajaTokenExpiresAt = 0
+let darajaTokenRequest
 
 cloudinary.config({
 	cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
@@ -114,24 +115,32 @@ function getDarajaConfigurationError() {
 
 async function getDarajaAccessToken() {
 	if (darajaAccessToken && Date.now() < darajaTokenExpiresAt) return darajaAccessToken
+	if (darajaTokenRequest) return darajaTokenRequest
 
-	const credentials = Buffer.from(`${process.env.DARAJA_CONSUMER_KEY}:${process.env.DARAJA_CONSUMER_SECRET}`).toString('base64')
-	const darajaBaseUrl = process.env.DARAJA_ENVIRONMENT === 'production' ? 'https://api.safaricom.co.ke' : 'https://sandbox.safaricom.co.ke'
-	const response = await fetch(`${darajaBaseUrl}/oauth/v1/generate?grant_type=client_credentials`, {
-		headers: { Authorization: `Basic ${credentials}` },
-		signal: AbortSignal.timeout(15000),
-	})
-	const responseBody = await response.text()
-	let data
-	try { data = responseBody ? JSON.parse(responseBody) : {} } catch { data = { rawResponse: responseBody } }
-	if (!data || typeof data !== 'object') data = { rawResponse: responseBody }
-	if (!response.ok || !data.access_token) {
-		const detail = data.error_description || data.errorMessage || data.rawResponse || `Daraja authentication failed with HTTP ${response.status}`
-		throw new Error(String(detail).slice(0, 500))
+	darajaTokenRequest = (async () => {
+		const credentials = Buffer.from(`${process.env.DARAJA_CONSUMER_KEY}:${process.env.DARAJA_CONSUMER_SECRET}`).toString('base64')
+		const darajaBaseUrl = process.env.DARAJA_ENVIRONMENT === 'production' ? 'https://api.safaricom.co.ke' : 'https://sandbox.safaricom.co.ke'
+		const response = await fetch(`${darajaBaseUrl}/oauth/v1/generate?grant_type=client_credentials`, {
+			headers: { Authorization: `Basic ${credentials}` },
+			signal: AbortSignal.timeout(8000),
+		})
+		const responseBody = await response.text()
+		let data
+		try { data = responseBody ? JSON.parse(responseBody) : {} } catch { data = { rawResponse: responseBody } }
+		if (!data || typeof data !== 'object') data = { rawResponse: responseBody }
+		if (!response.ok || !data.access_token) {
+			const detail = data.error_description || data.errorMessage || data.rawResponse || `Daraja authentication failed with HTTP ${response.status}`
+			throw new Error(String(detail).slice(0, 500))
+		}
+		darajaAccessToken = data.access_token
+		darajaTokenExpiresAt = Date.now() + Math.max(0, Number(data.expires_in || 0) * 1000 - 60000)
+		return darajaAccessToken
+	})()
+	try {
+		return await darajaTokenRequest
+	} finally {
+		darajaTokenRequest = undefined
 	}
-	darajaAccessToken = data.access_token
-	darajaTokenExpiresAt = Date.now() + Math.max(0, Number(data.expires_in || 0) - 60) * 1000
-	return darajaAccessToken
 }
 
 function darajaTimestamp() {
@@ -178,11 +187,10 @@ async function start() {
 	})
 
 	app.post('/api/payments/daraja/stk-push', async (request, response) => {
-		const configurationError = getDarajaConfigurationError()
-		if (configurationError) return response.status(503).json({ error: configurationError })
-
-		const { name, phone, serviceId, amount: displayedAmount, date, time } = request.body
-		if (!name || !phone || !serviceId || !date || !time) return response.status(400).json({ error: 'Please complete every booking field' })
+		const { name, phone, serviceId, amount: displayedAmount, date, time } = request.body || {}
+		if (typeof name !== 'string' || !name.trim() || typeof phone !== 'string' || !phone.trim() || typeof serviceId !== 'string' || !serviceId || typeof date !== 'string' || !date || typeof time !== 'string' || !time) {
+			return response.status(400).json({ error: 'Please complete every booking field' })
+		}
 
 		let customerPhone
 		try { customerPhone = normalizeKenyanPhone(phone) } catch (error) { return response.status(400).json({ error: error.message }) }
@@ -195,6 +203,9 @@ async function start() {
 		if (!Number.isSafeInteger(displayedAmount)) return response.status(400).json({ error: 'The displayed service amount is invalid. Please refresh and try again.' })
 		if (displayedAmount !== amount) return response.status(409).json({ error: 'The service price has changed. Please refresh and select it again.' })
 
+		const configurationError = getDarajaConfigurationError()
+		if (configurationError) return response.status(503).json({ error: configurationError })
+
 		const booking = {
 			id: crypto.randomUUID(),
 			name: String(name).trim(),
@@ -203,8 +214,12 @@ async function start() {
 			date,
 			time,
 			amount,
+			paidAmount: null,
+			customerPhone,
 			paymentMethod: 'mpesa',
 			paymentStatus: 'pending',
+			resultDescription: null,
+			paymentTimestamp: null,
 			createdAt: new Date().toISOString(),
 			source: 'customer',
 		}
@@ -238,7 +253,7 @@ async function start() {
 					AccountReference: 'TopRanking',
 					TransactionDesc: selectedService.name.slice(0, 13),
 				}),
-				signal: AbortSignal.timeout(20000),
+				signal: AbortSignal.timeout(15000),
 			})
 			const responseBody = await darajaResponse.text()
 			let data
@@ -277,23 +292,36 @@ async function start() {
 		if (!callback?.CheckoutRequestID || callback.ResultCode === undefined || callback.ResultCode === null || !Number.isInteger(Number(callback.ResultCode))) return response.status(400).json({ ResultCode: 1, ResultDesc: 'Invalid callback payload' })
 
 		const resultCode = Number(callback.ResultCode)
-		const items = callback.CallbackMetadata?.Item || []
-		const receiptNumber = items.find((item) => item.Name === 'MpesaReceiptNumber')?.Value
+		const items = Array.isArray(callback.CallbackMetadata?.Item) ? callback.CallbackMetadata.Item : []
+		const metadataValue = (name) => items.find((item) => item.Name === name)?.Value
+		const receiptNumber = metadataValue('MpesaReceiptNumber')
+		const resultDescription = String(callback.ResultDesc || (resultCode === 0 ? 'Payment completed' : 'M-Pesa payment was not completed')).slice(0, 500)
+		const paymentTimestamp = new Date().toISOString()
+		const paidAmount = Number(metadataValue('Amount'))
+		const callbackPhone = metadataValue('PhoneNumber')
 		const update = resultCode === 0
-			? { paymentStatus: 'paid', paidAt: new Date().toISOString(), ...(receiptNumber ? { mpesaReceiptNumber: String(receiptNumber) } : {}) }
-			: { paymentStatus: 'failed', paymentError: String(callback.ResultDesc || 'M-Pesa payment was not completed').slice(0, 200) }
+			? {
+				paymentStatus: 'paid',
+				paidAt: paymentTimestamp,
+				paymentTimestamp,
+				resultDescription,
+				...(Number.isFinite(paidAmount) ? { paidAmount } : {}),
+				...(receiptNumber ? { mpesaReceiptNumber: String(receiptNumber) } : {}),
+				...(callbackPhone ? { customerPhone: String(callbackPhone) } : {}),
+			}
+			: { paymentStatus: 'failed', resultDescription, paymentError: resultDescription, paymentTimestamp }
 		const result = await bookingsCollection.updateOne(
 			{ checkoutRequestId: callback.CheckoutRequestID, paymentMethod: 'mpesa', paymentStatus: 'pending' },
 			{ $set: update },
 		)
 		if (!result.matchedCount) console.warn('Daraja callback did not match a pending booking')
-		response.json({ ResultCode: 0, ResultDesc: 'Accepted' })
+		response.status(200).json({ ResultCode: 0, ResultDesc: 'Accepted' })
 	})
 
 	app.get('/api/payments/daraja/:checkoutRequestId', async (request, response) => {
 		const booking = await bookingsCollection.findOne(
 			{ checkoutRequestId: request.params.checkoutRequestId, paymentMethod: 'mpesa', source: 'customer' },
-			{ projection: { _id: 0, paymentStatus: 1, mpesaReceiptNumber: 1, paymentError: 1 } },
+			{ projection: { _id: 0, paymentStatus: 1, mpesaReceiptNumber: 1, paymentError: 1, resultDescription: 1, paidAmount: 1, customerPhone: 1, paymentTimestamp: 1, paidAt: 1 } },
 		)
 		if (!booking) return response.status(404).json({ error: 'Payment request not found' })
 		response.json(booking)
@@ -315,7 +343,22 @@ async function start() {
 	app.post('/api/admin/bookings', requireAdmin, async (request, response) => {
 		const { name, phone, service, date, time } = request.body
 		if (!name || !phone || !service || !date || !time) return response.status(400).json({ error: 'Please complete every booking field' })
-		const booking = { id: crypto.randomUUID(), name, phone, service, date, time, done: false, createdAt: new Date().toISOString(), source: 'admin' }
+		const booking = {
+			id: crypto.randomUUID(),
+			name,
+			phone,
+			customerPhone: phone,
+			service,
+			date,
+			time,
+			paymentMethod: 'pay_at_shop',
+			paymentStatus: 'pay_at_shop',
+			paidAmount: null,
+			paymentTimestamp: null,
+			done: false,
+			createdAt: new Date().toISOString(),
+			source: 'admin',
+		}
 		await bookingsCollection.insertOne(booking)
 		response.status(201).json({ booking })
 	})
@@ -373,7 +416,21 @@ async function start() {
 		if (!name || !phone || !service || !date || !time) return response.status(400).json({ error: 'Please complete every booking field' })
 		const digits = String(phone).replace(/\D/g, '')
 		if (!/^0[17]\d{8}$/.test(digits)) return response.status(400).json({ error: 'Phone number must be exactly 10 digits, for example 0712345678' })
-		const booking = { id: crypto.randomUUID(), name, phone: digits, service, date, time, createdAt: new Date().toISOString(), source: 'customer' }
+		const booking = {
+			id: crypto.randomUUID(),
+			name,
+			phone: digits,
+			customerPhone: digits,
+			service,
+			date,
+			time,
+			paymentMethod: 'pay_at_shop',
+			paymentStatus: 'pay_at_shop',
+			paidAmount: null,
+			paymentTimestamp: null,
+			createdAt: new Date().toISOString(),
+			source: 'customer',
+		}
 		await bookingsCollection.insertOne(booking)
 		response.status(201).json({ booking })
 	})

@@ -52,6 +52,14 @@ h1 i, h2 i { color: #f4ce68; }
 .booking-choice strong { font-size: 12px; }
 .booking-choice span { color: var(--muted); font-size: 10px; line-height: 1.5; }
 .payment-retry { display: block; margin: 12px auto 0; border: 0; background: transparent; color: var(--lime); font: 11px var(--mono); text-decoration: underline; cursor: pointer; }
+.booking-filters { display: flex; flex-wrap: wrap; gap: 7px; padding: 12px 0 0; }
+.booking-filters button { border: 1px solid var(--line); background: transparent; color: var(--muted); padding: 7px 9px; font: 9px var(--mono); text-transform: uppercase; }
+.booking-filters button.selected { border-color: var(--lime); color: var(--lime); }
+.booking-payment-status { color: var(--lime); font-size: 9px; text-transform: uppercase; }
+.receipt-modal { width: min(520px, 100%); }
+.receipt-modal dl { display: grid; grid-template-columns: minmax(110px, .7fr) 1fr; gap: 12px; margin: 24px 0 0; font: 11px/1.5 var(--mono); }
+.receipt-modal dt { color: var(--muted); text-transform: uppercase; }
+.receipt-modal dd { margin: 0; overflow-wrap: anywhere; }
 @media (max-width: 480px) { .booking-choice-group { grid-template-columns: 1fr; } }
 
 .image-view-button { appearance: none; padding: 0; border: 0; color: inherit; font: inherit; text-align: inherit; cursor: zoom-in; }
