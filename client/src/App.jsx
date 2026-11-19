@@ -35,6 +35,7 @@ function App() {
   const [adminMessage, setAdminMessage] = useState('')
   const [bookingFilter, setBookingFilter] = useState('all')
   const [receiptBooking, setReceiptBooking] = useState(null)
+  const [adminNavOpen, setAdminNavOpen] = useState(false)
   const [newBooking, setNewBooking] = useState({ name: '', phone: '', service: '', date: '', time: '' })
   const [isGalleryUploading, setIsGalleryUploading] = useState(false)
   const [uploadingMenuImageIndex, setUploadingMenuImageIndex] = useState(null)
@@ -43,6 +44,11 @@ function App() {
     const payAtShop = item.paymentMethod === 'pay_at_shop' || item.paymentMethod === 'queue' || !item.paymentMethod
     return bookingFilter === 'all' || (bookingFilter === 'paid' && paid) || (bookingFilter === 'shop' && payAtShop)
   })
+  const allAdminBookings = adminData?.bookings || []
+  const paidBookings = allAdminBookings.filter((item) => item.paymentMethod === 'mpesa' && item.paymentStatus === 'paid')
+  const shopBookings = allAdminBookings.filter((item) => item.paymentMethod === 'pay_at_shop' || item.paymentMethod === 'queue' || !item.paymentMethod)
+  const completedBookings = allAdminBookings.filter((item) => item.done)
+  const paidRevenue = paidBookings.reduce((total, item) => total + (Number(item.paidAmount ?? item.amount) || 0), 0)
 
   useEffect(() => {
     request('/api/site')
@@ -295,10 +301,10 @@ function App() {
       {selectedImage && <div className="image-viewer-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setSelectedImage(null)}><div className="image-viewer" role="dialog" aria-modal="true" aria-label="Full-size image"><button type="button" className="image-viewer-close" aria-label="Close full-size image" onClick={() => setSelectedImage(null)}>×</button><img src={selectedImage.url} alt={selectedImage.alt || 'Full-size barbershop design'} /></div></div>}
       {selectedService && <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setSelectedService(null)}><form className="modal booking-modal" onSubmit={submitBooking}><button type="button" className="close" onClick={() => setSelectedService(null)}>×</button><p className="eyebrow">Book your chair</p><h2>{selectedService.name}</h2><p className="modal-price">{currency(selectedService.price)}</p><label>Name<input required value={booking.name} onChange={(event) => setBooking({ ...booking, name: event.target.value })} /></label><label>Phone number<input required type="tel" inputMode="tel" maxLength={16} value={booking.phone} onChange={(event) => setBooking({ ...booking, phone: event.target.value.slice(0, 16) })} /></label><div className="form-row"><label>Date<input required type="date" value={booking.date} onChange={(event) => setBooking({ ...booking, date: event.target.value })} /></label><label>Time<input required type="time" value={booking.time} onChange={(event) => setBooking({ ...booking, time: event.target.value })} /></label></div><fieldset className="booking-choice-group" disabled={paymentStatus === 'pending' || paymentStatus === 'paid'}><legend>Choose how to book</legend><button type="button" className={`booking-choice ${booking.paymentMethod === 'queue' ? 'selected' : ''}`} onClick={() => chooseBookingMethod('queue')}><strong>Join the queue</strong><span>Book now and pay at the shop</span></button><button type="button" className={`booking-choice ${booking.paymentMethod === 'mpesa' ? 'selected' : ''}`} onClick={() => chooseBookingMethod('mpesa')}><strong>Pay now with M-Pesa</strong><span>Pay {currency(selectedService.price)} by STK Push</span></button></fieldset>{paymentStatus === 'paid' ? <a className="button button-dark submit" href={`${whatsappLink(site.whatsapp)}?text=${encodeURIComponent(`Hi TOP RANKING BARBERS! My M-Pesa payment for ${selectedService.name} is confirmed${paymentReceipt ? ` (receipt ${paymentReceipt})` : ''}. Booking: ${booking.date} at ${booking.time}. Name: ${booking.name}. Phone: ${booking.phone}.`)}`} target="_blank" rel="noreferrer">Send booking on WhatsApp <span>↗</span></a> : <button className="button button-dark submit" type="submit" disabled={isBookingSubmitting || paymentStatus === 'pending'}>{isBookingSubmitting ? 'Please wait…' : paymentStatus === 'pending' ? 'Waiting for M-Pesa confirmation…' : booking.paymentMethod === 'queue' ? 'Continue to WhatsApp' : `SEND M-PESA PROMPT · ${currency(selectedService.price)}`} <span>↗</span></button>}{paymentStatus === 'failed' && <button type="button" className="payment-retry" onClick={() => chooseBookingMethod(booking.paymentMethod)}>Try M-Pesa again</button>}{bookingMessage && <p className="form-message" role="status">{bookingMessage}</p>}</form></div>}
       {adminOpen && (
-        <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setAdminOpen(false)}>
+        <div className={`modal-backdrop admin-backdrop ${adminToken ? 'is-dashboard' : ''}`} onMouseDown={(event) => event.target === event.currentTarget && setAdminOpen(false)}>
           <div className={`modal admin-modal ${adminToken ? 'dashboard-modal' : ''}`}>
-            <button type="button" className="close" onClick={() => setAdminOpen(false)}>×</button>
             {!adminToken ? <>
+              <button type="button" className="close" onClick={() => setAdminOpen(false)}>×</button>
               <p className="eyebrow">Staff only</p>
               <h2>Admin access</h2>
               <form onSubmit={loginAdmin}>
@@ -308,62 +314,107 @@ function App() {
                 {adminMessage && <p className="form-message">{adminMessage}</p>}
               </form>
             </> : <>
-              <div className="dashboard-head"><div><p className="eyebrow">Control room</p><h2>Welcome to Top Ranking.</h2></div><span className="live-badge">Live menu</span></div>
-              <div className="dashboard-grid">
-                <section className="dashboard-panel">
-                  <div className="panel-heading"><h3>Bookings</h3><span>{adminData?.bookings.length || 0} total</span></div>
-                  <div className="booking-filters" aria-label="Filter bookings">
-                    <button type="button" className={bookingFilter === 'all' ? 'selected' : ''} onClick={() => setBookingFilter('all')}>All</button>
-                    <button type="button" className={bookingFilter === 'paid' ? 'selected' : ''} onClick={() => setBookingFilter('paid')}>Paid (M-Pesa)</button>
-                    <button type="button" className={bookingFilter === 'shop' ? 'selected' : ''} onClick={() => setBookingFilter('shop')}>Coming to pay in shop</button>
-                  </div>
-                  <form className="admin-booking-form" onSubmit={addAdminBooking}>
-                    <p className="panel-label">Add a booking</p>
-                    <div className="form-row"><input required placeholder="Client name" value={newBooking.name} onChange={(event) => setNewBooking({ ...newBooking, name: event.target.value })} /><input required placeholder="Phone number" value={newBooking.phone} onChange={(event) => setNewBooking({ ...newBooking, phone: event.target.value })} /></div>
-                    <div className="form-row"><select required value={newBooking.service} onChange={(event) => setNewBooking({ ...newBooking, service: event.target.value })}><option value="">Choose service</option>{adminData?.services.map((service) => <option key={service.id} value={service.name}>{service.name}</option>)}</select><input required type="date" value={newBooking.date} onChange={(event) => setNewBooking({ ...newBooking, date: event.target.value })} /><input required type="time" value={newBooking.time} onChange={(event) => setNewBooking({ ...newBooking, time: event.target.value })} /></div>
-                    <button className="button button-dark submit">Add booking <span>+</span></button>
-                  </form>
-                  <div className="admin-bookings">
-                    {visibleBookings.length ? visibleBookings.map((item) => {
-                      const paid = item.paymentMethod === 'mpesa' && item.paymentStatus === 'paid'
-                      const paymentLabel = item.paymentMethod === 'mpesa'
-                        ? `M-Pesa · ${item.paymentStatus || 'pending'}`
-                        : 'Pay at shop'
-                      return <div className={`admin-booking ${item.done ? 'is-done' : ''}`} key={item.id}>
-                        <p><strong>{item.name}</strong>{item.done && <span className="booking-status">Done</span>} · {item.service}<br />{item.date} at {item.time} · {item.customerPhone || item.phone}<br /><span className="booking-payment-status">{paymentLabel}</span></p>
-                        <div className="booking-actions">
-                          {paid && <button type="button" onClick={() => setReceiptBooking(item)}>Receipt</button>}
-                          <button type="button" onClick={() => markBookingDone(item)}>{item.done ? 'Restore' : 'Mark done'}</button>
-                          <button type="button" onClick={() => deleteBooking(item)}>Delete</button>
-                        </div>
+              <div className="admin-workspace">
+                <aside className={`admin-sidebar ${adminNavOpen ? 'is-open' : ''}`}>
+                  <a className="admin-brand" href="#admin-overview"><span className="brand-mark"><img src={logoUrl} alt="" /></span><span>TOP RANKING<small>BARBERS · ADMIN</small></span></a>
+                  <p className="admin-nav-label">Workspace</p>
+                  <nav className="admin-nav" aria-label="Admin navigation">
+                    <a href="#admin-overview" onClick={() => { setBookingFilter('all'); setAdminNavOpen(false) }}>Overview / Bookings</a>
+                    <a href="#admin-bookings" onClick={() => { setBookingFilter('paid'); setAdminNavOpen(false) }}>Paid (M-Pesa)</a>
+                    <a href="#admin-bookings" onClick={() => { setBookingFilter('shop'); setAdminNavOpen(false) }}>Pay in Shop</a>
+                    <a href="#admin-add-booking" onClick={() => setAdminNavOpen(false)}>Add Booking</a>
+                    <a href="#admin-customer-menu" onClick={() => setAdminNavOpen(false)}>Customer Menu</a>
+                  </nav>
+                  <a className="admin-live-link" href="#services" onClick={() => setAdminOpen(false)}>↗ View Live Menu</a>
+                  <div className="admin-sidebar-foot"><span className="admin-online-dot" />Connected to shop dashboard</div>
+                </aside>
+                <main className="admin-main">
+                  <header className="admin-topbar">
+                    <button type="button" className="admin-menu-toggle" aria-label="Toggle admin navigation" aria-expanded={adminNavOpen} onClick={() => setAdminNavOpen((open) => !open)}>☰</button>
+                    <span className="admin-topbar-label">Management workspace</span>
+                    <button type="button" className="admin-close" onClick={() => setAdminOpen(false)} aria-label="Close admin dashboard">×</button>
+                  </header>
+                  <div className="admin-content">
+                    <section className="admin-overview" id="admin-overview">
+                      <div className="dashboard-head"><div><p className="eyebrow">Control room</p><h2>Welcome back.</h2><p className="admin-intro">Here’s what’s happening at your shop today.</p></div><span className="live-badge"><span className="admin-online-dot" /> Live menu</span></div>
+                      <div className="admin-stats" aria-label="Booking summary">
+                        <article className="admin-stat"><span>Total bookings</span><strong>{allAdminBookings.length}</strong><small>Across all payment types</small></article>
+                        <article className="admin-stat"><span>Paid via M-Pesa</span><strong>{paidBookings.length}</strong><small className="stat-accent">{currency(paidRevenue)} collected</small></article>
+                        <article className="admin-stat"><span>Coming to pay in shop</span><strong>{shopBookings.length}</strong><small>Pay at the shop</small></article>
+                        <article className="admin-stat"><span>Revenue / completed</span><strong>{currency(paidRevenue)}</strong><small>{completedBookings.length} booking{completedBookings.length === 1 ? '' : 's'} completed</small></article>
                       </div>
-                    }) : <p>No bookings in this view.</p>}
+                    </section>
+                    <section className="admin-card bookings-card" id="admin-bookings">
+                      <div className="admin-card-heading"><div><p className="eyebrow">Schedule</p><h3>Bookings &amp; queue</h3></div><span className="admin-count">{allAdminBookings.length} total</span></div>
+                      <div className="booking-filters" aria-label="Filter bookings">
+                        <button type="button" className={bookingFilter === 'all' ? 'selected' : ''} onClick={() => setBookingFilter('all')}>All</button>
+                        <button type="button" className={bookingFilter === 'paid' ? 'selected' : ''} onClick={() => setBookingFilter('paid')}>Paid M-Pesa</button>
+                        <button type="button" className={bookingFilter === 'shop' ? 'selected' : ''} onClick={() => setBookingFilter('shop')}>Coming to pay in shop</button>
+                      </div>
+                      <div className="admin-bookings">
+                        {visibleBookings.length ? visibleBookings.map((item) => {
+                          const paid = item.paymentMethod === 'mpesa' && item.paymentStatus === 'paid'
+                          const paymentLabel = item.paymentMethod === 'mpesa'
+                            ? `M-Pesa · ${item.paymentStatus || 'pending'}`
+                            : 'Pay at shop'
+                          return <article className={`admin-booking ${item.done ? 'is-done' : ''}`} key={item.id}>
+                            <div className="booking-info">
+                              <div className="booking-client"><strong>{item.name}</strong>{item.done && <span className="booking-status">Done</span>}<span className={`booking-payment-status ${paid ? 'is-paid' : ''}`}>{paymentLabel}</span></div>
+                              <span className="booking-service">{item.service}</span>
+                              <span className="booking-datetime">{item.date} · {item.time}</span>
+                              <span className="booking-phone">{item.customerPhone || item.phone}</span>
+                            </div>
+                            <div className="booking-actions">
+                              {paid && <button type="button" onClick={() => setReceiptBooking(item)}>Receipt</button>}
+                              <button type="button" onClick={() => markBookingDone(item)}>{item.done ? 'Restore' : 'Mark done'}</button>
+                              <button type="button" onClick={() => deleteBooking(item)}>Delete</button>
+                            </div>
+                          </article>
+                        }) : <p className="admin-empty">No bookings in this view.</p>}
+                      </div>
+                    </section>
+                    <section className="admin-card admin-add-card" id="admin-add-booking">
+                      <div className="admin-card-heading"><div><p className="eyebrow">Schedule</p><h3>Add a booking</h3></div><span className="admin-card-icon">+</span></div>
+                      <form className="admin-booking-form" onSubmit={addAdminBooking}>
+                        <div className="admin-form-fields">
+                          <label>Client name<input required placeholder="e.g. Alex Mwangi" value={newBooking.name} onChange={(event) => setNewBooking({ ...newBooking, name: event.target.value })} /></label>
+                          <label>Phone number<input required type="tel" placeholder="e.g. 0712 345 678" value={newBooking.phone} onChange={(event) => setNewBooking({ ...newBooking, phone: event.target.value })} /></label>
+                          <label>Choose service<select required value={newBooking.service} onChange={(event) => setNewBooking({ ...newBooking, service: event.target.value })}><option value="">Choose service</option>{adminData?.services.map((service) => <option key={service.id} value={service.name}>{service.name}</option>)}</select></label>
+                          <label>Date<input required type="date" value={newBooking.date} onChange={(event) => setNewBooking({ ...newBooking, date: event.target.value })} /></label>
+                          <label>Time<input required type="time" value={newBooking.time} onChange={(event) => setNewBooking({ ...newBooking, time: event.target.value })} /></label>
+                        </div>
+                        <button className="button button-dark submit">Add booking <span>+</span></button>
+                      </form>
+                    </section>
+                    <section className="admin-card admin-menu-card" id="admin-customer-menu">
+                      <div className="admin-card-heading"><div><p className="eyebrow">Website</p><h3>Customer menu</h3></div><button type="button" className="add-menu" onClick={addMenuItem}>+ Add item</button></div>
+                      <p className="panel-help">Edit the services, prices, descriptions, and images shown to customers.</p>
+                      <form onSubmit={saveServices}>
+                        <div className="admin-menu-grid">
+                          {adminData?.services.map((service, index) => <div className="menu-editor" key={service.id}>
+                            <div className="menu-editor-top"><strong>MENU ITEM 0{index + 1}</strong><button type="button" onClick={() => setAdminData((current) => ({ ...current, services: current.services.filter((_, itemIndex) => itemIndex !== index) }))}>Remove</button></div>
+                            <label>Service name<input required placeholder="Service name" value={service.name} onChange={(event) => updateMenuItem(index, 'name', event.target.value)} /></label>
+                            <label>Description<textarea required placeholder="Description" rows="2" value={service.description} onChange={(event) => updateMenuItem(index, 'description', event.target.value)} /></label>
+                            <label>Price<input required type="number" min="0" placeholder="Price in KSh" value={service.price} onChange={(event) => updateMenuItem(index, 'price', event.target.value)} /></label>
+                            <label>Image URL<input placeholder="Menu image URL" value={service.image || ''} onChange={(event) => updateMenuItem(index, 'image', event.target.value)} /></label>
+                            <label className="menu-image-upload" htmlFor={`menu-image-${index}`}>{uploadingMenuImageIndex === index ? 'Uploading image...' : 'Choose menu image'}<input id={`menu-image-${index}`} type="file" accept="image/jpeg,image/png,image/webp,image/avif" disabled={uploadingMenuImageIndex === index} onChange={(event) => uploadMenuImage(index, event)} /></label>
+                            {service.image && <img className="menu-image-preview" src={service.image} alt={`${service.name || 'Menu item'} preview`} />}
+                          </div>)}
+                        </div>
+                        <button className="button button-dark submit">Save customer menu <span>↗</span></button>
+                      </form>
+                    </section>
+                    <form className="admin-card gallery-editor" onSubmit={saveImages}>
+                      <div className="admin-card-heading"><div><p className="eyebrow">Website</p><h3>Gallery images</h3></div><span className="admin-count">Admin only</span></div>
+                      <p className="panel-help">Manage the images displayed in the public shop gallery.</p>
+                      <textarea name="urls" aria-label="Gallery image URLs" defaultValue={site.images.map((image) => image.url).join('\n')} rows="3" />
+                      <label className="gallery-upload-label" htmlFor="gallery-upload">{isGalleryUploading ? 'Uploading to Cloudinary...' : 'Choose images'}<input id="gallery-upload" className="gallery-upload-input" type="file" accept="image/jpeg,image/png,image/webp,image/avif" multiple disabled={isGalleryUploading} onChange={uploadGalleryImage} /></label>
+                      <button className="button button-dark submit" disabled={isGalleryUploading}>{isGalleryUploading ? 'Uploading...' : 'Save gallery'} <span>↗</span></button>
+                    </form>
+                    {adminMessage && <p className="form-message admin-message" role="status">{adminMessage}</p>}
                   </div>
-                </section>
-                <section className="dashboard-panel">
-                  <div className="panel-heading"><h3>Customer menu</h3><button type="button" className="add-menu" onClick={addMenuItem}>+ Add item</button></div>
-                  <p className="panel-help">Edit prices, descriptions, and images customers see on the website.</p>
-                  <form onSubmit={saveServices}>
-                    {adminData?.services.map((service, index) => <div className="menu-editor" key={service.id}>
-                      <div className="menu-editor-top"><strong>0{index + 1}</strong><button type="button" onClick={() => setAdminData((current) => ({ ...current, services: current.services.filter((_, itemIndex) => itemIndex !== index) }))}>Remove</button></div>
-                      <input required placeholder="Service name" value={service.name} onChange={(event) => updateMenuItem(index, 'name', event.target.value)} />
-                      <textarea required placeholder="Description" rows="2" value={service.description} onChange={(event) => updateMenuItem(index, 'description', event.target.value)} />
-                      <input required type="number" min="0" placeholder="Price in R" value={service.price} onChange={(event) => updateMenuItem(index, 'price', event.target.value)} />
-                      <input placeholder="Menu image URL" value={service.image || ''} onChange={(event) => updateMenuItem(index, 'image', event.target.value)} />
-                      <label className="menu-image-upload" htmlFor={`menu-image-${index}`}>{uploadingMenuImageIndex === index ? 'Uploading image...' : 'Choose menu image'}<input id={`menu-image-${index}`} type="file" accept="image/jpeg,image/png,image/webp,image/avif" disabled={uploadingMenuImageIndex === index} onChange={(event) => uploadMenuImage(index, event)} /></label>
-                      {service.image && <img className="menu-image-preview" src={service.image} alt={`${service.name || 'Menu item'} preview`} />}
-                    </div>)}
-                    <button className="button button-dark submit">Save customer menu <span>↗</span></button>
-                  </form>
-                </section>
+                </main>
               </div>
-              <form className="gallery-editor" onSubmit={saveImages}>
-                <div className="panel-heading"><h3>Gallery images</h3><span>Admin only</span></div>
-                <textarea name="urls" defaultValue={site.images.map((image) => image.url).join('\n')} rows="3" />
-                <label className="gallery-upload-label" htmlFor="gallery-upload">{isGalleryUploading ? 'Uploading to Cloudinary...' : 'Choose images'}<input id="gallery-upload" className="gallery-upload-input" type="file" accept="image/jpeg,image/png,image/webp,image/avif" multiple disabled={isGalleryUploading} onChange={uploadGalleryImage} /></label>
-                <button className="button button-dark submit" disabled={isGalleryUploading}>{isGalleryUploading ? 'Uploading...' : 'Save gallery'} <span>↗</span></button>
-              </form>
-              {adminMessage && <p className="form-message">{adminMessage}</p>}
             </>}
           </div>
         </div>
